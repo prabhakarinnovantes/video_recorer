@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Record & Download Video</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+            color: #303030;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: auto;
+        }
+
+        .center {
+            text-align: center;
+            margin-top: 30px;
+        }
+
+        .upload-icon {
+            width: 200px;
+            height: 200px;
+        }
+
+        .warning {
+            color: red;
+        }
+
+        .btn-red {
+            background-color: #CF2230;
+            color: white;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            margin-top: 20px;
+            cursor: pointer;
+        }
+
+        .btn-gray {
+            background-color: #e0e0e0;
+            color: #333;
+            padding: 10px 16px;
+            border: none;
+            border-radius: 5px;
+            font-weight: bold;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+
+        .camera-view,
+        .preview-video {
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+            border-radius: 10px;
+            box-shadow: 0 0 10px #aaa;
+        }
+
+        .button-row {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .timer {
+            margin-top: 10px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <!-- Upload Section -->
+        <div id="upload_section">
+            <div class="center">
+                <img src="images/upload_dl.svg" class="upload-icon" alt="upload_dl">
+                <h3>Record Video</h3>
+                <p>
+                    Click on the button below to start recording your video.
+                    <br><br>
+                    <span class="warning">Please ensure you record the video in good light, speak clearly, and the
+                        video is clear. The recording will include both video and audio.</span>
+                </p>
+                <button id="startCamera" class="btn-red">Record Video ▶</button>
+            </div>
+        </div>
+
+        <!-- Camera Section -->
+        <div id="camera_section" class="hidden">
+            <div class="center">
+                <video id="video" autoplay muted playsinline class="camera-view"></video>
+                <div id="timer-display" class="timer hidden">00:00</div>
+                <div class="button-row">
+                    <button id="startRecord" class="btn-red">Start Recording</button>
+                    <button id="stopRecord" class="btn-red hidden">Stop Recording</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Preview Section -->
+        <div id="preview_section" class="hidden center">
+            <video id="preview_video" controls class="preview-video"></video>
+            <br>
+            <button id="retry" class="btn-gray">Record Again 🔁</button>
+            <a id="downloadBtn" class="btn-red" download>Download Video ⬇</a>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let recordedBlobs = [];
+        let stream;
+        let timerInterval;
+        let recordingTime = 0;
+        const videoMinLength = 1;
+        const videoMaxLength = 60;
+
+        const uploadSection = document.getElementById('upload_section');
+        const cameraSection = document.getElementById('camera_section');
+        const previewSection = document.getElementById('preview_section');
+
+        const startCameraBtn = document.getElementById('startCamera');
+        const startRecordBtn = document.getElementById('startRecord');
+        const stopRecordBtn = document.getElementById('stopRecord');
+        const retryBtn = document.getElementById('retry');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const timerDisplay = document.getElementById('timer-display');
+
+        startCameraBtn.onclick = startCameraSection;
+        retryBtn.onclick = startCameraSection;
+
+        function startCameraSection() {
+            uploadSection.classList.add('hidden');
+            previewSection.classList.add('hidden');
+            cameraSection.classList.remove('hidden');
+            resetTimer();
+            initCamera();
+        }
+
+        function initCamera() {
+            navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true
+            }).then(s => {
+                stream = s;
+                const video = document.getElementById('video');
+                video.srcObject = stream;
+            }).catch(err => {
+                alert("Camera access denied: " + err.message);
+            });
+        }
+
+        startRecordBtn.onclick = () => {
+            recordedBlobs = [];
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) recordedBlobs.push(e.data);
+            };
+            mediaRecorder.onstop = handleRecordingStop;
+
+            mediaRecorder.start();
+            startRecordBtn.classList.add('hidden');
+            stopRecordBtn.classList.remove('hidden');
+            startTimer();
+
+            setTimeout(() => {
+                if (mediaRecorder.state === 'recording') mediaRecorder.stop();
+            }, videoMaxLength * 1000);
+        };
+
+        stopRecordBtn.onclick = () => {
+            if (mediaRecorder.state === 'recording') mediaRecorder.stop();
+        };
+
+        function startTimer() {
+            timerDisplay.classList.remove('hidden');
+            timerInterval = setInterval(() => {
+                recordingTime++;
+                timerDisplay.textContent = formatTime(recordingTime);
+            }, 1000);
+        }
+
+        function stopTimer() {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+
+        function resetTimer() {
+            recordingTime = 0;
+            timerDisplay.textContent = "00:00";
+            timerDisplay.classList.add('hidden');
+        }
+
+        function formatTime(sec) {
+            const m = String(Math.floor(sec / 60)).padStart(2, '0');
+            const s = String(sec % 60).padStart(2, '0');
+            return `${m}:${s}`;
+        }
+
+        function handleRecordingStop() {
+            stopRecordBtn.classList.add('hidden');
+            startRecordBtn.classList.remove('hidden');
+            stopTimer();
+
+            if (recordingTime < videoMinLength) {
+                alert("Video is too short");
+                return;
+            }
+
+            const blob = new Blob(recordedBlobs, { type: 'video/webm' });
+            const url = URL.createObjectURL(blob);
+
+            // Preview
+            const preview = document.getElementById('preview_video');
+            preview.src = url;
+
+            // Download link
+            downloadBtn.href = url;
+            downloadBtn.download = `recorded_video_${Date.now()}.webm`;
+
+            cameraSection.classList.add('hidden');
+            previewSection.classList.remove('hidden');
+        }
+    </script>
+
+</body>
+
+</html>
