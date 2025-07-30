@@ -100,7 +100,7 @@
             <form class="mt-3" method="post" enctype="multipart/form-data">
                 <input type="file" name="video" id="videoData" style="display: none;">
                 <div class="flex justify-center w-[100%] md:w-[20%] m-auto mt-5 md:mt-1">
-                    <button type="submit"
+                    <button type="submit" id="submitButton"
                         class="flex justify-between font-bold w-full rounded p-3 bg-[#CF2230] text-white">
                         SUBMIT VIDEO
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5"
@@ -398,28 +398,37 @@
                     previewVideo.src = url;
                 }
 
-                // Set the video file directly using DataTransfer
-                const videoInput = document.getElementById('videoData');
-                const dataTransfer = new DataTransfer();
+                // Store the blob globally for form submission
+                window.recordedVideoBlob = blob;
+                window.recordedVideoMimeType = mimeType;
 
-                // Generate a unique name for the video file with correct extension
-                // For iOS Safari, we need to be more careful about file extensions
-                let fileExtension = 'webm';
-                if (mimeType.includes('mp4')) {
-                    fileExtension = 'mp4';
-                } else if (mimeType.includes('webm')) {
-                    fileExtension = 'webm';
-                } else if (isIOSSafari) {
-                    // iOS Safari fallback - assume MP4 for better compatibility
-                    fileExtension = 'mp4';
-                    mimeType = 'video/mp4';
-                    console.log('iOS Safari: Using MP4 extension for better compatibility');
+                // For iOS Safari, we need a different approach for file input
+                if (isIOSSafari) {
+                    // iOS Safari doesn't support DataTransfer well, so we'll handle this in the form submission
+                    console.log('iOS Safari: Storing blob for manual form handling');
+                } else {
+                    // For other browsers, we can still use DataTransfer
+                    try {
+                        const videoInput = document.getElementById('videoData');
+                        const dataTransfer = new DataTransfer();
+
+                        // Generate a unique name for the video file with correct extension
+                        let fileExtension = 'webm';
+                        if (mimeType.includes('mp4')) {
+                            fileExtension = 'mp4';
+                        } else if (mimeType.includes('webm')) {
+                            fileExtension = 'webm';
+                        }
+
+                        const uniqueFileName = `recorded_video_${Date.now()}.${fileExtension}`;
+                        const file = new File([blob], uniqueFileName, { type: mimeType });
+                        dataTransfer.items.add(file);
+                        videoInput.files = dataTransfer.files;
+                    } catch (error) {
+                        console.log('DataTransfer failed, will handle in form submission:', error);
+                        // Fallback to manual handling
+                    }
                 }
-
-                const uniqueFileName = `recorded_video_${Date.now()}.${fileExtension}`;
-                const file = new File([blob], uniqueFileName, { type: mimeType });
-                dataTransfer.items.add(file);
-                videoInput.files = dataTransfer.files;
 
                 if (!enforceVideoLength()) {
                     $('#preview_section').addClass('hidden');
@@ -515,10 +524,30 @@
             }
         });
 
-        document.querySelector('form').addEventListener('submit', function (event) {
+        // iOS-specific: Add touch event handling for better user interaction
+        if (isIOS) {
+            // iOS Safari requires user interaction for certain operations
+            document.addEventListener('touchstart', function () {
+                // This ensures user interaction is detected
+                console.log('Touch interaction detected on iOS');
+            }, { passive: true });
+        }
 
+        // Add direct click handler for submit button as iOS fallback
+        document.getElementById('submitButton').addEventListener('click', function (event) {
+            // Prevent default to handle manually
             event.preventDefault();
 
+            // Trigger the same logic as form submission
+            if (isIOSSafari) {
+                console.log('iOS Safari submit button clicked directly');
+            }
+
+            // Call the form submission logic
+            handleFormSubmission();
+        });
+
+        function handleFormSubmission() {
             if (recordingTime < videoMinLength) {
                 alert(`The video must be at least ${videoMinLength} seconds long.`);
                 return false;
@@ -529,9 +558,40 @@
 
             let formData = new FormData();
             let videoData = document.getElementById('videoData').files[0];
+
+            // iOS Safari fallback: if no file in input, use the stored blob
+            if (!videoData && window.recordedVideoBlob) {
+                console.log('iOS Safari: Using stored blob for form submission');
+
+                // Create a file from the stored blob
+                let fileExtension = 'mp4'; // Default for iOS
+                if (window.recordedVideoMimeType && window.recordedVideoMimeType.includes('webm')) {
+                    fileExtension = 'webm';
+                }
+
+                const uniqueFileName = `recorded_video_${Date.now()}.${fileExtension}`;
+                videoData = new File([window.recordedVideoBlob], uniqueFileName, {
+                    type: window.recordedVideoMimeType || 'video/mp4'
+                });
+            }
+
+            if (!videoData) {
+                alert('No video data available. Please record a video first.');
+                return false;
+            }
+
+            // Validate file size for iOS
+            if (isIOSSafari && videoData.size < 1024) {
+                alert('Video file appears to be corrupted or too small. Please record again.');
+                return false;
+            }
+
             formData.append('video', videoData);
 
             $('#loading_section').removeClass('hidden');
+
+            // Add timeout for iOS Safari
+            const timeoutDuration = isIOSSafari ? 30000 : 15000; // 30 seconds for iOS, 15 for others
 
             $.ajax({
                 url: 'http://192.168.1.20:7000/api/test-upload-video',
@@ -539,19 +599,44 @@
                 data: formData,
                 processData: false,
                 contentType: false,
+                timeout: timeoutDuration,
                 success: function (response) {
-                    console.log(response);
+                    console.log('Upload successful:', response);
                     alert('Video uploaded successfully');
                     $('#loading_section').addClass('hidden');
+
+                    // Clear stored blob
+                    window.recordedVideoBlob = null;
+                    window.recordedVideoMimeType = null;
+
                     setTimeout(() => {
                         location.reload();
                     }, 1000);
                 },
-                error: function (error) {
-                    console.log(error);
+                error: function (xhr, status, error) {
+                    console.log('Upload error:', { xhr, status, error });
                     $('#loading_section').addClass('hidden');
+
+                    if (status === 'timeout') {
+                        alert('Upload timed out. Please check your connection and try again.');
+                    } else {
+                        alert('Upload failed. Please try again.');
+                    }
                 }
             });
+        }
+
+        document.querySelector('form').addEventListener('submit', function (event) {
+
+            event.preventDefault();
+
+            // iOS Safari requires user interaction for form submission
+            if (isIOSSafari) {
+                console.log('iOS Safari form submission initiated');
+            }
+
+            // Call the shared submission logic
+            handleFormSubmission();
         });
     </script>
 
